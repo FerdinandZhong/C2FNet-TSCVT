@@ -20,9 +20,9 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--testsize', type=int, default=352, help='testing size')
 parser.add_argument('--pth_path', type=str, default='checkpoints/C2FNet/C2FNet-49.pth')
 
-for _data_name in ['CAMO','CHAMELEON','COD10K']: #'CAMO','CHAMELEON','COD10K'
+for _data_name in ['NC4K']: #'CAMO','CHAMELEON','COD10K'
     data_path = 'data/TestDataset/{}'.format(_data_name)
-    save_path = 'results/C2FNet49/{}/'.format(_data_name)
+    save_path = 'results/C2FNetFull/{}/'.format(_data_name)
     opt = parser.parse_args()
     model = C2FNet()
     #model = torch.nn.DataParallel(model)
