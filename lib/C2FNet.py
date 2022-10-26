@@ -341,6 +341,52 @@ class C2FNet(nn.Module):
         self.inplanes = planes
 
         return nn.Sequential(*layers)
+
+class BasicC2FNet(C2FNet):
+    def __init__(self, channel=32):
+        super(C2FNet, self).__init__()
+        self.classifier1 = nn.Conv2d(channel*3, 1, 1)
+
+    def forward(self, x):
+        x = self.resnet.conv1(x)
+        x = self.resnet.bn1(x)
+        x = self.resnet.relu(x)
+        x = self.resnet.maxpool(x)  # bs, 64, 88, 88
+        # ---- low-level features ----
+        x1 = self.resnet.layer1(x)  # bs, 256, 88, 88
+        x2 = self.resnet.layer2(x1)  # bs, 512, 44, 44
+
+        x3 = self.resnet.layer3(x2)  # bs, 1024, 22, 22
+        x4 = self.resnet.layer4(x3)  # bs, 2048, 11, 11
+
+        x2_1 = self.rfb2_1(x2)  # channel -> 32
+        x3_1 = self.rfb3_1(x3)  # channel -> 32
+        x4_1 = self.rfb4_1(x4)  # channel -> 32
+
+        x1 = torch.cat((x2_1, x3_1, x4_1), 1)
+        s2 = self.classifier1(x1)
+
+        x0, x1, x2 = self.refine(s2.sigmoid(), x, x1, x2)
+
+        x0_1 = self.rfb0_1(x0)
+        x1_1 = self.rfb1_1(x1)
+        x2_2 = self.rfb2_2(x2)
+
+        x2 = self.up1(x2_2)
+        x21 = torch.cat((x2, x1_1), 1)
+        x21 = self.uconv1(x21)
+        x210 = torch.cat((x21, x0_1), 1)
+
+        x210 = self.uconv2(x210)
+
+        s0 = self.deconv1(x210)
+        s0 = self.deconv2(s0)
+        s0 = self.classifier2(s0)
+        s2 = F.interpolate(s2, scale_factor=8, mode='bilinear', align_corners=False)
+
+        return s2, s0
+
+
 if __name__ == '__main__':
     torch.cuda.set_device(0)
     ras = C2FNet().cuda()
