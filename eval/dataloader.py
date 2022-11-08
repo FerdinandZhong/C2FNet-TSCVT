@@ -1,6 +1,7 @@
-from torch.utils import data
 import os
+
 from PIL import Image
+from torch.utils import data
 
 
 class EvalDataset(data.Dataset):
@@ -23,14 +24,12 @@ class EvalDataset(data.Dataset):
             if iname in label_names:
                 name_list.append(iname)
 
-        self.image_path = list(
-            map(lambda x: os.path.join(pred_root, x), name_list))
-        self.label_path = list(
-            map(lambda x: os.path.join(label_root, x), name_list))
+        self.image_path = list(map(lambda x: os.path.join(pred_root, x), name_list))
+        self.label_path = list(map(lambda x: os.path.join(label_root, x), name_list))
 
     def __getitem__(self, item):
-        pred = Image.open(self.image_path[item]).convert('L')
-        gt = Image.open(self.label_path[item]).convert('L')
+        pred = Image.open(self.image_path[item]).convert("L")
+        gt = Image.open(self.label_path[item]).convert("L")
         if pred.size != gt.size:
             pred = pred.resize(gt.size, Image.BILINEAR)
         return pred, gt

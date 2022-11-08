@@ -8,8 +8,6 @@ from datetime import datetime
 
 import torch.nn.functional as F
 from torch.autograd import Variable
-from torch.utils.tensorboard import SummaryWriter
-
 from lib.C2FNet import (
     BasicACFMC2FNet,
     BasicACFMDGCMC2FNet,
@@ -22,6 +20,10 @@ from lib.C2FNet import (
 from utils.AdaX import AdaXW
 from utils.dataloader import get_loader
 from utils.utils import AvgMeter, adjust_lr, clip_gradient
+from ray import tune
+from ray.tune import CLIReporter
+from ray.tune.schedulers import ASHAScheduler
+from functools import partial
 
 # from ..BBSC2F_P1.lib.BBS_C2F import BBS_C2FNet
 
@@ -58,8 +60,49 @@ def LCE_loss(pred1, pred2, mask):
     return loss
 
 
+def train_cifar(
+    config, train_loader, model, epochs, model_type="C2FNet", checkpoint_dir=None
+):
+    if checkpoint_dir:
+        model_state, optimizer_state = torch.load(
+            os.path.join(checkpoint_dir, "checkpoint"))
+        model.load_state_dict(model_state)
+        optimizer.load_state_dict(optimizer_state)
+
+    model.train()
+    params = model.parameters()
+    optimizer = AdaXW(
+        params,
+        config["lr"],
+        weight_decay=config["weight_decay"],
+    )
+    file_name = "{}_tuning_results.txt".format(model_type)
+    log_file = open(file_name, "a")
+    log_file.write(str(config) + "\n")
+
+    for epoch in range(1, epochs):
+        adjust_lr(optimizer, config["lr"], epoch, config["decay_rate"], config["decay_epoch"])
+        visual = train(
+            train_loader,
+            model,
+            optimizer,
+            epoch,
+            log_file=log_file,
+        )
+
+        tune.report(loss = visual["loss"])
+        if (epoch + 1) % 5 == 0:
+            # torch.save(model.state_dict(), save_path + "C2FNet-%d.pth" % epoch)
+            # print("[Saving Snapshot:]", save_path + "C2FNet-%d.pth" % epoch)
+            with tune.checkpoint_dir(epoch) as checkpoint_dir:
+                path = os.path.join(checkpoint_dir, "check")
+                torch.save((model.state_dict(), optimizer.state_dict()), path)
+
+    print("Current hyperparameters set training finished \n\n")
+
+
 def train(
-    train_loader, model, optimizer, epoch, model_type="C2FNet", tensorboard_writter=None
+    train_loader, model, optimizer, epoch, log_file
 ):
     model.train()
     # ---- multi-scale training ----
@@ -103,26 +146,14 @@ def train(
         # ---- train visualization ----
 
         if i % 20 == 0 or i == total_step:
-            file_name = "{}_lr_1e-4_train_results.txt".format(model_type)
-            file = open(file_name, "a")
             test_result = "{} Epoch [{:03d}/{:03d}], Step [{:04d}/{:04d}], [lateral-3: {:.4f}]".format(
                 datetime.now(), epoch, opt.epoch, i, total_step, loss_record3.show()
             )
-            file.write(test_result + "\n")
-            print(test_result)
-            tensorboard_writter.add_scalar(
-                "training loss (steps)",
-                loss_record3.show(),
-                i + ((epoch - 1) * total_step),
-            )
-
-    save_path = opt.train_save
-    os.makedirs(save_path, exist_ok=True)
-    visual = {"time": datetime.now(), "Epoch ": epoch, "loss": loss_record3.show()}
-    file.write(str(visual) + "\n\n")
-    if (epoch + 1) % 5 == 0:
-        torch.save(model.state_dict(), save_path + "C2FNet-%d.pth" % epoch)
-        print("[Saving Snapshot:]", save_path + "C2FNet-%d.pth" % epoch)
+            log_file.write(test_result + "\n")
+        visual = {"time": datetime.now(), "Epoch ": epoch, "loss": loss_record3.show()}
+        file.write(str(visual) + "\n")
+    
+    return visual
 
 
 if __name__ == "__main__":
@@ -151,33 +182,60 @@ if __name__ == "__main__":
     parser.add_argument("--train_save", type=str, default="C2FNet")
     parser.add_argument("--model", default="C2FNet")
     opt = parser.parse_args()
-    tensorboard_writter = SummaryWriter(f"logs/{opt.model}")
 
     # ---- build models ----
     torch.cuda.set_device(0)  # set your gpu device
     model = model_registry[opt.model]().cuda()
 
-    params = model.parameters()
-    optimizer = AdaXW(params, opt.lr)
-
     image_root = "{}/Imgs/".format(opt.train_path)
     gt_root = "{}/GT/".format(opt.train_path)
-    print(image_root)
-    print(gt_root)
+    print(f"image root: {image_root}")
+    print(f"gt root: {gt_root}")
+
     train_loader = get_loader(
         image_root, gt_root, batchsize=opt.batchsize, trainsize=opt.trainsize
     )
     total_step = len(train_loader)
 
-    print("Start Training")
+    print("Start Tuning \n")
 
-    for epoch in range(1, opt.epoch):
-        adjust_lr(optimizer, opt.lr, epoch, opt.decay_rate, opt.decay_epoch)
-        train(
-            train_loader,
-            model,
-            optimizer,
-            epoch,
-            model_type=opt.model,
-            tensorboard_writter=tensorboard_writter,
-        )
+    config = {
+        "lr": tune.loguniform(1e-5, 1e-2),
+        "weight_decay": tune.loguniform(1e-4, 1e-1),
+        "decay_rate": tune.choice([0.05, 0.1, 0.2]),
+        "decay_epoch": tune.choice([30, 40, 50])
+    }
+
+    scheduler = ASHAScheduler(
+        metric="loss",
+        mode="min",
+        max_t=10,
+        grace_period=1,
+        reduction_factor=2)
+    reporter = CLIReporter(
+        parameter_columns=["lr", "weight_decay", "decay_rate", "decay_epoch"],
+        metric_columns=["loss", "training_iteration"])
+    
+    gpus_per_trial = 2
+
+    if torch.cuda.device_count() > 1:
+        model = torch.nn.DataParallel(model)
+    model.cuda()
+
+    result = tune.run(
+        partial(train_cifar, train_loader=train_loader, model=model, epochs=opt.epoch),
+        resources_per_trial={"cpu": 8, "gpu": gpus_per_trial},
+        config=config,
+        num_samples=20,
+        scheduler=scheduler,
+        progress_reporter=reporter,
+        checkpoint_at_end=True
+    )
+
+    best_trial = result.get_best_trial("loss", "min", "last")
+    print("Best trial config: {}".format(best_trial.config))
+    print("Best trial final loss: {}".format(
+        best_trial.last_result["loss"]))
+
+
+
