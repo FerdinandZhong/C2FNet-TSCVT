@@ -13,18 +13,32 @@ import torch
 import torch.nn.functional as F
 import numpy as np
 from scipy import misc
-from lib.C2FNet import C2FNet
+from lib.C2FNet import C2FNet, BasicCIMC2FNet, BasicACFMC2FNet, BasicC2FNet, BasicDGCMC2FNet, BasicACFMDGCMC2FNet, C2FNetWOMSCA
 from utils.dataloader import test_dataset
 import time
+
+
 parser = argparse.ArgumentParser()
 parser.add_argument('--testsize', type=int, default=352, help='testing size')
 parser.add_argument('--pth_path', type=str, default='checkpoints/C2FNet/C2FNet-49.pth')
+parser.add_argument('--save_path', type=str, default='results/C2FNetFull')
+parser.add_argument('--model', type=str, default='C2FNet')
+
+model_registry = {
+    "C2FNet": C2FNet,
+    "BasicC2FNet": BasicC2FNet,
+    "BasicCIMC2FNet": BasicCIMC2FNet,
+    "BasicACFMC2FNet": BasicACFMC2FNet,
+    "BasicDGCMC2FNet": BasicDGCMC2FNet,
+    "BasicACFMDGCMC2FNet": BasicACFMDGCMC2FNet,
+    "C2FNetWOMSCA": C2FNetWOMSCA
+}
 
 for _data_name in ['NC4K']: #'CAMO','CHAMELEON','COD10K'
-    data_path = 'data/TestDataset/{}'.format(_data_name)
-    save_path = 'results/C2FNetFull/{}/'.format(_data_name)
     opt = parser.parse_args()
-    model = C2FNet()
+    data_path = 'data/TestDataset/{}'.format(_data_name)
+    save_path = '{}/{}/'.format(opt.save_path, _data_name)
+    model = model_registry[opt.model]().cuda()
     #model = torch.nn.DataParallel(model)
     #torch.backends.cudnn.benchmark = True
     torch.cuda.set_device(0)

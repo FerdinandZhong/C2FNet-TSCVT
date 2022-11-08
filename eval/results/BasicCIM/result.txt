@@ -1,0 +1,1 @@
+NC4K (BasicC2FNet): 0.0573 mae || 0.7779 max-fm || 0.7668 mean-fm || 0.7700 adaptive-fm || 0.8819 max-Emeasure || 0.8672 mean-Emeasure || 0.8812 adaptive-Emeasure || 0.8143 S-measure || 0.7712 AP || 0.9183 AUC.

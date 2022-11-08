@@ -7,12 +7,23 @@ import argparse
 from datetime import datetime
 # from ..BBSC2F_P1.lib.BBS_C2F import BBS_C2FNet
 
-from lib.C2FNet import C2FNet
+from lib.C2FNet import C2FNet, BasicCIMC2FNet, BasicACFMC2FNet, BasicC2FNet, BasicDGCMC2FNet, BasicACFMDGCMC2FNet, C2FNetWOMSCA
 from utils.dataloader import get_loader
 from utils.utils import clip_gradient, adjust_lr, AvgMeter
 import torch.nn.functional as F
 from utils.AdaX import AdaXW
+from torch.utils.tensorboard import SummaryWriter
 
+
+model_registry = {
+    "C2FNet": C2FNet,
+    "BasicC2FNet": BasicC2FNet,
+    "BasicCIMC2FNet": BasicCIMC2FNet,
+    "BasicACFMC2FNet": BasicACFMC2FNet,
+    "BasicDGCMC2FNet": BasicDGCMC2FNet,
+    "BasicACFMDGCMC2FNet": BasicACFMDGCMC2FNet,
+    "C2FNetWOMSCA": C2FNetWOMSCA
+}
 
 def structure_loss(pred, mask):
     weit = 1 + 5 * torch.abs(F.avg_pool2d(mask, kernel_size=31, stride=1, padding=15) - mask)
@@ -31,7 +42,7 @@ def LCE_loss(pred1, pred2, mask):
     loss = loss1 + loss2
     return loss
 
-def train(train_loader, model, optimizer, epoch):
+def train(train_loader, model, optimizer, epoch, model_type="C2FNet", tensorboard_writter=None):
     model.train()
     # ---- multi-scale training ----
     size_rates = [0.75, 1, 1.25]
@@ -64,23 +75,27 @@ def train(train_loader, model, optimizer, epoch):
         # ---- train visualization ----
 
         if i % 20 == 0 or i == total_step:
-            file_name = 'lr_{}_train_results.txt'.format('1e-4')
+            file_name = '{}_lr_1e-4_train_results.txt'.format(model_type)
             file = open(file_name, "a")
             test_result = '{} Epoch [{:03d}/{:03d}], Step [{:04d}/{:04d}], [lateral-3: {:.4f}]'.format(datetime.now(),epoch,opt.epoch, i,total_step,loss_record3.show())
             file.write(test_result + '\n')
             print(test_result)
+            tensorboard_writter.add_scalar(
+                "training loss (steps)", loss_record3.show(), i+((epoch-1)*total_step)
+            )
 
-    save_path = 'checkpoints/{}/'.format(opt.train_save)
+    save_path = opt.train_save
     os.makedirs(save_path, exist_ok=True)
     visual = {"time": datetime.now(),
               "Epoch ": epoch,
               "loss": loss_record3.show()
-
               }
     file.write(str(visual) + '\n\n')
     if (epoch+1)  % 5 == 0:
         torch.save(model.state_dict(), save_path + 'C2FNet-%d.pth' % epoch)
         print('[Saving Snapshot:]', save_path + 'C2FNet-%d.pth' % epoch)
+
+        
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--epoch', type=int,
@@ -101,11 +116,13 @@ if __name__ == '__main__':
                         default='data/TrainDataset', help='path_to_train_dataset')
     parser.add_argument('--train_save', type=str,
                         default='C2FNet')
+    parser.add_argument('--model', default="C2FNet")
     opt = parser.parse_args()
+    tensorboard_writter = SummaryWriter(f"logs/{opt.model}")
 
     # ---- build models ----
     torch.cuda.set_device(0)  # set your gpu device
-    model = C2FNet().cuda()
+    model = model_registry[opt.model]().cuda()
 
     params = model.parameters()
     optimizer = AdaXW(params, opt.lr)
@@ -121,4 +138,4 @@ if __name__ == '__main__':
 
     for epoch in range(1, opt.epoch):
         adjust_lr(optimizer, opt.lr, epoch, opt.decay_rate, opt.decay_epoch)
-        train(train_loader, model, optimizer, epoch)
+        train(train_loader, model, optimizer, epoch, model_type=opt.model, tensorboard_writter=tensorboard_writter)

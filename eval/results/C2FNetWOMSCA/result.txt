@@ -1,0 +1,1 @@
+NC4K (C2FNetWOMSCA): 0.0546 mae || 0.7921 max-fm || 0.7811 mean-fm || 0.7795 adaptive-fm || 0.8860 max-Emeasure || 0.8780 mean-Emeasure || 0.8831 adaptive-Emeasure || 0.8211 S-measure || 0.7681 AP || 0.9134 AUC.
