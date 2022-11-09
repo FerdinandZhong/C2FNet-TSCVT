@@ -24,6 +24,7 @@ from ray import tune
 from ray.tune import CLIReporter
 from ray.tune.schedulers import ASHAScheduler
 from functools import partial
+from tqdm import tqdm
 
 # from ..BBSC2F_P1.lib.BBS_C2F import BBS_C2FNet
 
@@ -61,7 +62,7 @@ def LCE_loss(pred1, pred2, mask):
 
 
 def train_cifar(
-    config, train_loader, model, epochs, model_type="C2FNet", checkpoint_dir=None
+    config, model, epochs, save_path, checkpoint_dir=None
 ):
     if checkpoint_dir:
         model_state, optimizer_state = torch.load(
@@ -76,102 +77,88 @@ def train_cifar(
         config["lr"],
         weight_decay=config["weight_decay"],
     )
-    file_name = "{}_tuning_results.txt".format(model_type)
-    log_file = open(file_name, "a")
-    log_file.write(str(config) + "\n")
+    file_name = "tuning_results.txt"
+    with open(file_name, "a") as log_file:
+        log_file.write("\n\n" + "new set of params \n" + str(config) + "\n")
 
     for epoch in range(1, epochs):
         adjust_lr(optimizer, config["lr"], epoch, config["decay_rate"], config["decay_epoch"])
-        visual = train(
-            train_loader,
-            model,
-            optimizer,
-            epoch,
-            log_file=log_file,
-        )
+        # ---- multi-scale training ----
+        size_rates = [0.75, 1, 1.25]
+        loss_record3 = AvgMeter()
+        with tqdm(range(1, len(train_loader)+1)) as pbar:
+            for i, pack in enumerate(train_loader, start=1):
+                for rate in size_rates:
+                    optimizer.zero_grad()
+                    # ---- data prepare ----
+                    images, gts = pack
+                    images = Variable(images).cuda()
+                    gts = Variable(gts).cuda()
+                    # ---- rescale ----
+                    trainsize = int(round(opt.trainsize * rate / 32) * 32)
+                    if rate != 1:
+                        images = F.upsample(
+                            images,
+                            size=(trainsize, trainsize),
+                            mode="bilinear",
+                            align_corners=True,
+                        )
+                        gts = F.upsample(
+                            gts,
+                            size=(trainsize, trainsize),
+                            mode="bilinear",
+                            align_corners=True,
+                        )
+                    # ---- forward ----
+                    pred1, pred2 = model(images)
+                    # ---- loss function ----
+                    loss3 = LCE_loss(pred1, pred2, gts)
+                    loss = loss3
+                    # ---- backward ----
+                    loss.backward()
+                    clip_gradient(optimizer, opt.clip)
+                    optimizer.step()
+                    # ---- recording loss ----
+                    if rate == 1:
+                        loss_record3.update(loss3.data, opt.batchsize)
+                # ---- train visualization ----
+
+                pbar.update(1)
+                pbar.set_postfix(
+                    {
+                        "Last_loss": f"{loss_record3.show():.2f}",
+                    }
+                )    
+                if i % 20 == 0 or i == total_step:
+                    test_result = "{} Epoch [{:03d}/{:03d}], Step [{:04d}/{:04d}], [lateral-3: {:.4f}]".format(
+                        datetime.now(), epoch, opt.epoch, i, total_step, loss_record3.show()
+                    )
+                    with open(file_name, "a") as log_file:
+                        log_file.write(test_result + "\n")
+        visual = {"time": datetime.now(), "Epoch ": epoch, "loss": loss_record3.show()}
+        os.makedirs(save_path, exist_ok=True)
 
         tune.report(loss = visual["loss"])
         if (epoch + 1) % 5 == 0:
-            # torch.save(model.state_dict(), save_path + "C2FNet-%d.pth" % epoch)
-            # print("[Saving Snapshot:]", save_path + "C2FNet-%d.pth" % epoch)
-            with tune.checkpoint_dir(epoch) as checkpoint_dir:
-                path = os.path.join(checkpoint_dir, "check")
-                torch.save((model.state_dict(), optimizer.state_dict()), path)
+            model_name = f"C2FNet-{config['lr']}-{config['weight_decay']}-{config['decay_rate']}--{config['decay_epoch']}-{epoch}.pth"
+            torch.save(model.state_dict(), save_path + model_name)
+            print("[Saving Snapshot:]", save_path + model_name)
+            # with tune.checkpoint_dir(epoch) as checkpoint_dir:
+            #     path = os.path.join(checkpoint_dir, "check")
+            #     torch.save((model.state_dict(), optimizer.state_dict()), path)
 
     print("Current hyperparameters set training finished \n\n")
-
-
-def train(
-    train_loader, model, optimizer, epoch, log_file
-):
-    model.train()
-    # ---- multi-scale training ----
-    size_rates = [0.75, 1, 1.25]
-    loss_record3 = AvgMeter()
-    for i, pack in enumerate(train_loader, start=1):
-        file = open("loss.txt", "a")
-        for rate in size_rates:
-            optimizer.zero_grad()
-            # ---- data prepare ----
-            images, gts = pack
-            images = Variable(images).cuda()
-            gts = Variable(gts).cuda()
-            # ---- rescale ----
-            trainsize = int(round(opt.trainsize * rate / 32) * 32)
-            if rate != 1:
-                images = F.upsample(
-                    images,
-                    size=(trainsize, trainsize),
-                    mode="bilinear",
-                    align_corners=True,
-                )
-                gts = F.upsample(
-                    gts,
-                    size=(trainsize, trainsize),
-                    mode="bilinear",
-                    align_corners=True,
-                )
-            # ---- forward ----
-            pred1, pred2 = model(images)
-            # ---- loss function ----
-            loss3 = LCE_loss(pred1, pred2, gts)
-            loss = loss3
-            # ---- backward ----
-            loss.backward()
-            clip_gradient(optimizer, opt.clip)
-            optimizer.step()
-            # ---- recording loss ----
-            if rate == 1:
-                loss_record3.update(loss3.data, opt.batchsize)
-        # ---- train visualization ----
-
-        if i % 20 == 0 or i == total_step:
-            test_result = "{} Epoch [{:03d}/{:03d}], Step [{:04d}/{:04d}], [lateral-3: {:.4f}]".format(
-                datetime.now(), epoch, opt.epoch, i, total_step, loss_record3.show()
-            )
-            log_file.write(test_result + "\n")
-        visual = {"time": datetime.now(), "Epoch ": epoch, "loss": loss_record3.show()}
-        file.write(str(visual) + "\n")
-    
-    return visual
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--epoch", type=int, default=200, help="epoch number")
-    parser.add_argument("--lr", type=float, default=1e-4, help="learning rate")
     parser.add_argument("--batchsize", type=int, default=4, help="training batch size")
     parser.add_argument(
         "--trainsize", type=int, default=352, help="training dataset size"
     )
     parser.add_argument(
         "--clip", type=float, default=0.5, help="gradient clipping margin"
-    )
-    parser.add_argument(
-        "--decay_rate", type=float, default=0.1, help="decay rate of learning rate"
-    )
-    parser.add_argument(
-        "--decay_epoch", type=int, default=40, help="every n epochs decay learning rate"
     )
     parser.add_argument(
         "--train_path",
@@ -184,8 +171,8 @@ if __name__ == "__main__":
     opt = parser.parse_args()
 
     # ---- build models ----
-    torch.cuda.set_device(0)  # set your gpu device
-    model = model_registry[opt.model]().cuda()
+    # torch.cuda.set_device(0)  # set your gpu device
+    model = model_registry[opt.model]()
 
     image_root = "{}/Imgs/".format(opt.train_path)
     gt_root = "{}/GT/".format(opt.train_path)
@@ -216,20 +203,20 @@ if __name__ == "__main__":
         parameter_columns=["lr", "weight_decay", "decay_rate", "decay_epoch"],
         metric_columns=["loss", "training_iteration"])
     
-    gpus_per_trial = 2
+    gpus_per_trial = 1
 
-    if torch.cuda.device_count() > 1:
-        model = torch.nn.DataParallel(model)
+    # if torch.cuda.device_count() > 1:
+    #     model = torch.nn.DataParallel(model)
     model.cuda()
 
     result = tune.run(
-        partial(train_cifar, train_loader=train_loader, model=model, epochs=opt.epoch),
+        tune.with_parameters(train_cifar, model=model, epochs=opt.epoch, save_path=opt.train_save),
         resources_per_trial={"cpu": 8, "gpu": gpus_per_trial},
         config=config,
         num_samples=20,
         scheduler=scheduler,
         progress_reporter=reporter,
-        checkpoint_at_end=True
+        max_concurrent_trials=2
     )
 
     best_trial = result.get_best_trial("loss", "min", "last")
