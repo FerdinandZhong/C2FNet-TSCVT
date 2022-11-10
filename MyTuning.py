@@ -138,7 +138,7 @@ def train_cifar(
         visual = {"time": datetime.now(), "Epoch ": epoch, "loss": loss_record3.show()}
         os.makedirs(save_path, exist_ok=True)
 
-        tune.report(loss = visual["loss"])
+        tune.report(training_loss = visual["loss"].cpu())
         if (epoch + 1) % 5 == 0:
             model_name = f"C2FNet-{config['lr']}-{config['weight_decay']}-{config['decay_rate']}--{config['decay_epoch']}-{epoch}.pth"
             torch.save(model.state_dict(), save_path + model_name)
@@ -188,20 +188,20 @@ if __name__ == "__main__":
 
     config = {
         "lr": tune.loguniform(1e-5, 1e-2),
-        "weight_decay": tune.loguniform(1e-4, 1e-1),
+        "weight_decay": tune.loguniform(5e-3, 1e-1),
         "decay_rate": tune.choice([0.05, 0.1, 0.2]),
         "decay_epoch": tune.choice([30, 40, 50])
     }
 
     scheduler = ASHAScheduler(
-        metric="loss",
+        metric="training_loss",
         mode="min",
         max_t=10,
         grace_period=1,
         reduction_factor=2)
     reporter = CLIReporter(
         parameter_columns=["lr", "weight_decay", "decay_rate", "decay_epoch"],
-        metric_columns=["loss", "training_iteration"])
+        metric_columns=["training_loss", "training_iteration"])
     
     gpus_per_trial = 1
 
