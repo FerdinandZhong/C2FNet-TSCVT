@@ -356,6 +356,7 @@ if __name__ == "__main__":
     # ---- build models ----
     # torch.cuda.set_device(0)  # set your gpu device
     model = model_registry[opt.model]()
+    model.cuda()
 
     image_root = "{}/Imgs/".format(opt.train_path)
     gt_root = "{}/GT/".format(opt.train_path)
@@ -378,7 +379,7 @@ if __name__ == "__main__":
 
     print("Save validation gt images")
     os.makedirs("/export/home2/qishuai/ray_results/selected_gt", exist_ok=True)
-    
+
     for i in tqdm(range(test_loader.size)):
         _, gt, name = test_loader.load_data(i)
         _, fullflname = os.path.split(name)
