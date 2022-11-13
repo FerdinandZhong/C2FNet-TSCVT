@@ -153,3 +153,4 @@ data/*
 results/*
 */__pycache__/*
 *.pth
+*.zip

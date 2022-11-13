@@ -3,6 +3,7 @@ import os
 import torch.utils.data as data
 import torchvision.transforms as transforms
 from PIL import Image
+import random
 
 
 class PolypDataset(data.Dataset):
@@ -10,7 +11,7 @@ class PolypDataset(data.Dataset):
     dataloader for polyp segmentation tasks
     """
 
-    def __init__(self, image_root, gt_root, trainsize):
+    def __init__(self, image_root, gt_root, trainsize, sample_size = 0):
         self.trainsize = trainsize
         self.images = [
             image_root + f
@@ -18,6 +19,7 @@ class PolypDataset(data.Dataset):
             if f.endswith(".jpg") or f.endswith(".png")
         ]
         self.gts = [gt_root + f for f in os.listdir(gt_root) if f.endswith(".png")]
+
         self.images = sorted(self.images)
         self.gts = sorted(self.gts)
         self.filter_files()
@@ -86,9 +88,10 @@ def get_loader(
     shuffle=True,
     num_workers=4,
     pin_memory=True,
+    sample_size=0
 ):
 
-    dataset = PolypDataset(image_root, gt_root, trainsize)
+    dataset = PolypDataset(image_root, gt_root, trainsize, sample_size=sample_size)
     data_loader = data.DataLoader(
         dataset=dataset,
         batch_size=batchsize,
@@ -100,7 +103,7 @@ def get_loader(
 
 
 class test_dataset:
-    def __init__(self, image_root, gt_root, testsize):
+    def __init__(self, image_root, gt_root, testsize, sample_size=0):
         self.testsize = testsize
         self.images = [
             image_root + f
@@ -114,6 +117,12 @@ class test_dataset:
         ]
         self.images = sorted(self.images)
         self.gts = sorted(self.gts)
+        if sample_size > 0:
+            indexes = random.sample(range(len(self.images)), sample_size)
+            self.images = [self.images[i] for i in indexes]
+            self.gts = [self.gts[i] for i in indexes]
+            print(self.images, "\n")
+            print(self.gts, "\n")
         self.transform = transforms.Compose(
             [
                 transforms.Resize((self.testsize, self.testsize)),
@@ -125,14 +134,13 @@ class test_dataset:
         self.size = len(self.images)
         self.index = 0
 
-    def load_data(self):
-        image = self.rgb_loader(self.images[self.index])
+    def load_data(self, index):
+        image = self.rgb_loader(self.images[index])
         image = self.transform(image).unsqueeze(0)
-        gt = self.binary_loader(self.gts[self.index])
-        name = self.images[self.index].split("/")[-1]
+        gt = self.binary_loader(self.gts[index])
+        name = self.images[index].split("/")[-1]
         if name.endswith(".jpg"):
             name = name.split(".jpg")[0] + ".png"
-        self.index += 1
         return image, gt, name
 
     def rgb_loader(self, path):
