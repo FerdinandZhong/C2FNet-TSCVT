@@ -36,7 +36,8 @@ model_registry = {
 
 for _data_name in ["NC4K"]:  #'CAMO','CHAMELEON','COD10K'
     opt = parser.parse_args()
-    data_path = "data/TestDataset/{}".format(_data_name)
+    # data_path = "data/TestDataset/{}".format(_data_name)
+    data_path = "data/TestDataset"
     save_path = "{}/{}/".format(opt.save_path, _data_name)
     model = model_registry[opt.model]().cuda()
     # model = torch.nn.DataParallel(model)
@@ -52,7 +53,7 @@ for _data_name in ["NC4K"]:  #'CAMO','CHAMELEON','COD10K'
     test_loader = test_dataset(image_root, gt_root, opt.testsize)
 
     for i in range(test_loader.size):
-        image, gt, name = test_loader.load_data()
+        image, gt, name = test_loader.load_data(i)
         gt = np.asarray(gt, np.float32)
         gt /= gt.max() + 1e-8
         image = image.cuda()

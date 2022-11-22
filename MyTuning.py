@@ -199,6 +199,7 @@ def train_cifar(config, model, epochs, save_path, checkpoint_dir=None):
     optimizer = AdaXW(
         params,
         config["lr"],
+        betas=(config["beta1"], config["beta2"]),
         weight_decay=config["weight_decay"],
     )
     file_name = "tuning_results.txt"
@@ -208,7 +209,7 @@ def train_cifar(config, model, epochs, save_path, checkpoint_dir=None):
     for epoch in range(1, epochs):
         model.train()
         adjust_lr(
-            optimizer, config["lr"], epoch, config["decay_rate"], config["decay_epoch"]
+            optimizer, config["lr"], epoch, 
         )
         # ---- multi-scale training ----
         size_rates = [0.75, 1, 1.25]
@@ -320,7 +321,7 @@ def train_cifar(config, model, epochs, save_path, checkpoint_dir=None):
             val_smeasure=visual["val_smeasure"],
         )
         if (epoch + 1) % 5 == 0:
-            model_name = f"/C2FNet-{config['lr']}-{config['weight_decay']}-{config['decay_rate']}--{config['decay_epoch']}-{epoch}.pth"
+            model_name = f"/C2FNet-{config['lr']}-{config['weight_decay']}-{epoch}.pth"
             torch.save(model.state_dict(), save_path + model_name)
             print("[Saving Snapshot:]", save_path + model_name)
 
@@ -390,17 +391,17 @@ if __name__ == "__main__":
     print("Start Tuning \n")
 
     config = {
-        "lr": tune.loguniform(1e-5, 1e-3),
-        "weight_decay": tune.choice([5e-3, 1e-2, 5e-2, 1e-1]),
-        "decay_rate": tune.choice([0.05, 0.1, 0.2]),
-        "decay_epoch": tune.choice([30, 40, 50]),
+        "lr": tune.choice([1e-5, 1e-4, 1e-3]),
+        "weight_decay": tune.choice([1e-2, 5e-2, 1e-1]),
+        "beta1": tune.choice([0.9, 0.99]),
+        "beta2": tune.choice([1e-4, 1e-3])
     }
 
     scheduler = ASHAScheduler(
-        metric="training_loss", mode="min", max_t=20, grace_period=3, reduction_factor=2
+        metric="training_loss", mode="min", max_t=50, grace_period=10, reduction_factor=3
     )
     reporter = CLIReporter(
-        parameter_columns=["lr", "weight_decay", "decay_rate", "decay_epoch"],
+        parameter_columns=["lr", "weight_decay", "beta1", "beta2"],
         metric_columns=[
             "training_loss",
             "val_mea",
@@ -409,38 +410,43 @@ if __name__ == "__main__":
         ],
     )
 
-    gpus_per_trial = 1
+    gpus_per_trial = 0.5
 
-    result = tune.run(
-        tune.with_parameters(
-            train_cifar, model=model, epochs=opt.epoch, save_path=opt.train_save
-        ),
-        resources_per_trial={"cpu": 8, "gpu": gpus_per_trial},
-        config=config,
-        num_samples=20,
-        scheduler=scheduler,
-        progress_reporter=reporter,
-        max_concurrent_trials=3,
-    )
-
-    print("printing result")
-
-    # # re-analysis
-    # register_trainable(
-    #     "train_cifar",
+    # result = tune.run(
     #     tune.with_parameters(
     #         train_cifar, model=model, epochs=opt.epoch, save_path=opt.train_save
     #     ),
-    # )
-    # analysis = ExperimentAnalysis(
-    #     "/export/home2/qishuai/ray_results/train_cifar_2022-11-12_23-54-42"
+    #     resources_per_trial={"cpu": 8, "gpu": gpus_per_trial},
+    #     config=config,
+    #     num_samples=36,
+    #     scheduler=scheduler,
+    #     progress_reporter=reporter,
+    #     max_concurrent_trials=6,
     # )
 
-    best_trial = result.get_best_trial("training_loss", mode="min")
-    print(
-        "Best trial config: {}".format(
-            result.get_best_config("training_loss", mode="min")
-        )
+    print("printing result")
+
+    # re-analysis
+    register_trainable(
+        "train_cifar",
+        tune.with_parameters(
+            train_cifar, model=model, epochs=opt.epoch, save_path=opt.train_save
+        ),
     )
-    print("Best trial final loss: {}".format(best_trial.last_result))
-    print(f"Best trail runner ip: {best_trial.get_runner_ip}")
+    analysis = ExperimentAnalysis(
+        "/export/home2/qishuai/ray_results/train_cifar_2022-11-13_20-59-30"
+    )
+
+    result_grid = analysis.results_df
+
+    round_df = result_grid.round(3)
+    round_df["config/beta2"] = result_grid["config/beta2"]
+    round_df.to_csv("tuning_results.csv")
+    # best_trial = result.get_best_trial("training_loss", mode="min")
+    # print(
+    #     "Best trial config: {}".format(
+    #         result.get_best_config("training_loss", mode="min")
+    #     )
+    # )
+    # print("Best trial final loss: {}".format(best_trial.last_result))
+    # print(f"Best trail runner ip: {best_trial.get_runner_ip}")

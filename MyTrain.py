@@ -121,8 +121,8 @@ def train(
     visual = {"time": datetime.now(), "Epoch ": epoch, "loss": loss_record3.show()}
     file.write(str(visual) + "\n\n")
     if (epoch + 1) % 5 == 0:
-        torch.save(model.state_dict(), save_path + "C2FNet-%d.pth" % epoch)
-        print("[Saving Snapshot:]", save_path + "C2FNet-%d.pth" % epoch)
+        torch.save(model.state_dict(), save_path + "/C2FNet-%d.pth" % epoch)
+        print("[Saving Snapshot:]", save_path + "/C2FNet-%d.pth" % epoch)
 
 
 if __name__ == "__main__":
