@@ -412,19 +412,20 @@ if __name__ == "__main__":
 
     gpus_per_trial = 0.5
 
-    # result = tune.run(
-    #     tune.with_parameters(
-    #         train_cifar, model=model, epochs=opt.epoch, save_path=opt.train_save
-    #     ),
-    #     resources_per_trial={"cpu": 8, "gpu": gpus_per_trial},
-    #     config=config,
-    #     num_samples=36,
-    #     scheduler=scheduler,
-    #     progress_reporter=reporter,
-    #     max_concurrent_trials=6,
-    # )
+    result = tune.run(
+        tune.with_parameters(
+            train_cifar, model=model, epochs=opt.epoch, save_path=opt.train_save
+        ),
+        resources_per_trial={"cpu": 8, "gpu": gpus_per_trial},
+        config=config,
+        num_samples=36,
+        scheduler=scheduler,
+        progress_reporter=reporter,
+        max_concurrent_trials=6,
+    )
 
-    print("printing result")
+    best_trial = result.get_best_trial("training_loss", mode="min")
+    print("Best trial final loss: {}".format(best_trial.last_result))
 
     # re-analysis
     register_trainable(
@@ -442,6 +443,8 @@ if __name__ == "__main__":
     round_df = result_grid.round(3)
     round_df["config/beta2"] = result_grid["config/beta2"]
     round_df.to_csv("tuning_results.csv")
+
+
     # best_trial = result.get_best_trial("training_loss", mode="min")
     # print(
     #     "Best trial config: {}".format(
